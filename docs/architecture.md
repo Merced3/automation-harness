@@ -117,7 +117,7 @@ A separate deployment supervisor may eventually coordinate safe updates and roll
 
 ## 10. Delivery phases
 
-### Phase 0 — Foundation (current)
+### Phase 0 — Foundation (complete)
 
 - Package and repository skeleton
 - Tests and lint configuration
@@ -125,7 +125,7 @@ A separate deployment supervisor may eventually coordinate safe updates and roll
 - Architecture and decision records
 - Continuous integration foundation
 
-### Phase 1 — Reliable runtime
+### Phase 1 — Reliable runtime (complete)
 
 - Application lifecycle
 - Structured logs and health state
@@ -134,7 +134,7 @@ A separate deployment supervisor may eventually coordinate safe updates and roll
 - Graceful shutdown and restart recovery
 - Neutral heartbeat example
 
-Acceptance: scheduled work remains correct after process termination and restart.
+Acceptance: scheduled work remains correct after process termination and restart. **Met.**
 
 ### Phase 2 — Adapter foundation
 

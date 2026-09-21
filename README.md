@@ -36,9 +36,25 @@ Keeping applications in separate repositories allows them to be released and dep
 
 ## Status
 
-This repository is in **Phase 0: design and foundation**. The production runtime has not yet been implemented.
+**Phase 1: reliable runtime** is implemented. The harness now provides:
 
-See [`docs/architecture.md`](docs/architecture.md) for the current technical plan.
+- **Scheduled activation** — interval jobs persisted in SQLite; schedules survive restarts
+- **Process coordination** — single-instance lock (a second copy refuses to start; stale locks from dead processes are reclaimed) and graceful shutdown on SIGINT/SIGTERM
+- **Restart recovery** — runs cut off mid-execution are marked `interrupted`; missed schedules run one catch-up, never a storm
+- **Operation status** — structured JSON logs, `harness.status()` snapshots, and a continuously updated `status.json`
+- **Job state** — persistent per-job key/value state via `ctx.get_state` / `ctx.set_state`
+
+```python
+from automation_harness import Harness, HarnessConfig
+
+harness = Harness(HarnessConfig(data_dir="data"), name="my-automation")
+harness.add_job("my_job", my_function, every_s=300, run_immediately=True)
+harness.run()  # blocks until Ctrl+C or SIGTERM
+```
+
+See [`examples/heartbeat`](examples/heartbeat/) for a runnable demonstration, and
+[`docs/architecture.md`](docs/architecture.md) for the technical plan. Remaining phases
+(adapter contracts, integrations, hardening) are not yet implemented.
 
 ## Development
 
