@@ -9,8 +9,7 @@ Automation projects often begin as scripts and gradually accumulate schedules, s
 - Run continuously and recover predictably after restarts or failures
 - Preserve schedules and operational state across process restarts
 - Make failures visible through structured logs and health reporting
-- Connect applications to external services through replaceable adapters
-- Keep application-specific behavior outside the shared runtime
+- Keep application-specific behavior — including all external services — outside the shared runtime
 - Support AI-driven agents as well as deterministic, algorithmic workflows
 - Remain portable enough to move between machines and deployments
 
@@ -53,8 +52,9 @@ harness.run()  # blocks until Ctrl+C or SIGTERM
 ```
 
 See [`examples/heartbeat`](examples/heartbeat/) for a runnable demonstration, and
-[`docs/architecture.md`](docs/architecture.md) for the technical plan. Remaining phases
-(adapter contracts, integrations, hardening) are not yet implemented.
+[`docs/architecture.md`](docs/architecture.md) for the technical plan. The harness is
+deliberately agnostic: it has no knowledge of Discord, model providers, or any other
+external service. Anything further is built only when a real application proves the need.
 
 ## Development
 

@@ -9,8 +9,8 @@ Long-running automations share operational needs, but each application has diffe
 
 ## Decision
 
-Automation Harness owns common runtime concerns such as lifecycle, scheduling, operational state, recovery, integrations, and health reporting. Applications own their workflows, decision logic, content, and interpretation of data.
+Automation Harness owns common runtime concerns such as lifecycle, scheduling, operational state, recovery, and health reporting. Applications own their workflows, decision logic, content, interpretation of data, and any integration with external services.
 
 ## Consequences
 
-Public contracts must remain small and be validated by applications outside this repository. Integration adapters should not import application-specific behavior or assume a particular use case.
+Public contracts must remain small and be validated by applications outside this repository. The harness must not import application-specific behavior or assume a particular use case.
