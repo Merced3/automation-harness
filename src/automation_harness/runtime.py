@@ -86,10 +86,13 @@ class _Service:
     restart: bool = True
     backoff_initial_s: float = 1.0
     backoff_max_s: float = 60.0
+    max_consecutive_failures: int | None = None
+    reset_after_s: float | None = None
     stop_event: asyncio.Event | None = field(default=None, repr=False)
     task: asyncio.Task[None] | None = field(default=None, repr=False)
-    state: str = "pending"  # pending | running | backoff | stopped
+    state: str = "pending"  # pending | running | backoff | stopped | failed
     restart_count: int = 0
+    consecutive_failures: int = 0
     last_error: str | None = None
 
 
@@ -122,6 +125,7 @@ class Harness:
         self._started_at: datetime | None = None
         self._lock_acquired = False
         self._health_checks: dict[str, Callable[[], bool]] = {}
+        self._alert_hooks: list[Callable[[dict[str, Any]], Any]] = []
 
     # -- registration -----------------------------------------------------
 
@@ -149,6 +153,8 @@ class Harness:
         restart: bool = True,
         backoff_initial_s: float = 1.0,
         backoff_max_s: float = 60.0,
+        max_consecutive_failures: int | None = None,
+        reset_after_s: float | None = None,
     ) -> None:
         """Register a long-running supervised coroutine.
 
@@ -156,6 +162,13 @@ class Harness:
         is set. If it raises, the failure is recorded and the service is
         restarted with exponential backoff (unless restart=False). A service
         that returns cleanly is finished and is not restarted.
+
+        Restart escalation: after ``max_consecutive_failures`` consecutive
+        failures (None = restart forever), the service is marked ``failed``
+        in status, alert hooks are invoked, and restarts stop. A run that
+        survives at least ``reset_after_s`` seconds (default:
+        ``backoff_max_s``) counts as healthy and resets the consecutive
+        failure count, so a flapping service still escalates.
 
         Services require the async runtime: call run() as usual and it will
         delegate to the event loop, or drive it yourself with ``arun()``.
@@ -166,13 +179,26 @@ class Harness:
             raise TypeError("service fn must be a coroutine function (async def)")
         if backoff_initial_s <= 0 or backoff_max_s < backoff_initial_s:
             raise ValueError("require 0 < backoff_initial_s <= backoff_max_s")
+        if max_consecutive_failures is not None and max_consecutive_failures < 1:
+            raise ValueError("max_consecutive_failures must be >= 1 or None")
+        if reset_after_s is not None and reset_after_s <= 0:
+            raise ValueError("reset_after_s must be positive or None")
         self._services[name] = _Service(
             name=name,
             fn=fn,
             restart=restart,
             backoff_initial_s=float(backoff_initial_s),
             backoff_max_s=float(backoff_max_s),
+            max_consecutive_failures=max_consecutive_failures,
+            reset_after_s=float(reset_after_s) if reset_after_s is not None else None,
         )
+
+    def on_alert(self, fn: Callable[[dict[str, Any]], Any]) -> None:
+        """Register a hook invoked with an event dict when a service escalates
+        to permanently failed. Delivery is the application's responsibility;
+        the harness only calls the hook. May be a plain function or a
+        coroutine function. Hook errors are logged, never raised."""
+        self._alert_hooks.append(fn)
 
     def add_health_check(self, name: str, check: Callable[[], bool]) -> None:
         self._health_checks[name] = check
@@ -314,11 +340,18 @@ class Harness:
     async def _supervise(self, service: _Service) -> None:
         log = logging.LoggerAdapter(logger, {"service": service.name})
         backoff = service.backoff_initial_s
+        reset_after_s = (
+            service.reset_after_s
+            if service.reset_after_s is not None
+            else service.backoff_max_s
+        )
+        escalated = False
         assert service.stop_event is not None
         try:
             while not self._stop.is_set():
                 service.state = "running"
                 run_id = self.store.start_run(service.name, os.getpid(), self.config.node_id)
+                started = time.monotonic()
                 ctx = ServiceContext(
                     harness=self,
                     service_name=service.name,
@@ -335,8 +368,25 @@ class Harness:
                     error = f"{type(exc).__name__}: {exc}"
                     self.store.finish_run(run_id, "failed", error=error)
                     service.last_error = error
+                    if time.monotonic() - started >= reset_after_s:
+                        service.consecutive_failures = 1  # run was healthy; start fresh
+                    else:
+                        service.consecutive_failures += 1
                     log.exception("service failed")
                     if not service.restart:
+                        break
+                    if (
+                        service.max_consecutive_failures is not None
+                        and service.consecutive_failures >= service.max_consecutive_failures
+                    ):
+                        service.state = "failed"
+                        escalated = True
+                        log.error(
+                            "service escalated after %d consecutive failure(s); "
+                            "giving up until the process restarts",
+                            service.consecutive_failures,
+                        )
+                        await self._emit_alert(service, run_id)
                         break
                     service.restart_count += 1
                     service.state = "backoff"
@@ -350,10 +400,35 @@ class Harness:
                     backoff = min(service.backoff_max_s, backoff * 2)
                 else:
                     self.store.finish_run(run_id, "succeeded")
+                    service.consecutive_failures = 0
                     log.info("service returned cleanly; not restarting")
                     break
         finally:
-            service.state = "stopped"
+            if not escalated:
+                service.state = "stopped"
+
+    async def _emit_alert(self, service: _Service, run_id: int) -> None:
+        """Invoke alert hooks with a plain event dict. Hooks are application
+        code; their errors are logged and never affect supervision."""
+        event: dict[str, Any] = {
+            "event": "service_escalated",
+            "harness": self.name,
+            "node": self.config.node_id,
+            "service": service.name,
+            "run_id": run_id,
+            "consecutive_failures": service.consecutive_failures,
+            "max_consecutive_failures": service.max_consecutive_failures,
+            "last_error": service.last_error,
+            "ts": datetime.now(UTC).isoformat(),
+        }
+        for hook in self._alert_hooks:
+            try:
+                if inspect.iscoroutinefunction(hook):
+                    await hook(event)
+                else:
+                    await asyncio.to_thread(hook, event)
+            except Exception:  # noqa: BLE001 - alert delivery must never crash the runtime
+                logger.exception("alert hook %r failed", getattr(hook, "__name__", hook))
 
     async def _ashutdown(self, timeout_s: float = 30.0) -> None:
         """Signal services to stop, wait for them and in-flight jobs, release resources."""
@@ -460,6 +535,7 @@ class Harness:
                 name: {
                     "state": s.state,
                     "restart_count": s.restart_count,
+                    "consecutive_failures": s.consecutive_failures,
                     "last_error": s.last_error,
                 }
                 for name, s in self._services.items()

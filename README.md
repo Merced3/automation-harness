@@ -50,6 +50,11 @@ Keeping applications in separate repositories allows them to be released and dep
   keeps every Phase 1 guarantee (lock, recovery, schedules, status file)
 - **Supervised services** — long-running coroutines (`harness.add_service`) that run
   until asked to stop, with restart-on-failure and exponential backoff
+- **Restart escalation** — after `max_consecutive_failures` consecutive crashes a
+  service is marked permanently `failed` and restarts stop (a run surviving
+  `reset_after_s` counts as healthy and resets the count)
+- **Alert hooks** — `harness.on_alert(fn)` invokes your callback with an event dict
+  when a service escalates; the harness stays agnostic of how alerts are delivered
 - **Async jobs** — interval jobs may be plain functions (run in a worker thread) or
   coroutine functions (run on the loop)
 
@@ -61,9 +66,6 @@ harness.add_job("my_job", my_function, every_s=300, run_immediately=True)
 harness.add_service("my_service", my_async_loop, backoff_max_s=60)
 harness.run()  # blocks until Ctrl+C or SIGTERM; owns the event loop when needed
 ```
-
-Planned next (Phase 3, documented but not yet built): restart escalation for
-permanently failing services and a generic, delivery-agnostic alert hook.
 
 See [`examples/heartbeat`](examples/heartbeat/) for the thread-based runtime and
 [`examples/async_ticker`](examples/async_ticker/) for the async runtime. The harness is
