@@ -35,7 +35,7 @@ Keeping applications in separate repositories allows them to be released and dep
 
 ## Status
 
-**Phase 1: reliable runtime** is implemented. The harness now provides:
+**Phase 1: reliable runtime** is implemented. The harness provides:
 
 - **Scheduled activation** — interval jobs persisted in SQLite; schedules survive restarts
 - **Process coordination** — single-instance lock (a second copy refuses to start; stale locks from dead processes are reclaimed) and graceful shutdown on SIGINT/SIGTERM
@@ -43,16 +43,27 @@ Keeping applications in separate repositories allows them to be released and dep
 - **Operation status** — structured JSON logs, `harness.status()` snapshots, and a continuously updated `status.json`
 - **Job state** — persistent per-job key/value state via `ctx.get_state` / `ctx.set_state`
 
+**Phase 2: asyncio hosting and services** is implemented. The harness additionally provides:
+
+- **Async runtime** — applications built on asyncio are hosted directly: when a
+  service or coroutine job is registered, `harness.run()` owns the event loop and
+  keeps every Phase 1 guarantee (lock, recovery, schedules, status file)
+- **Supervised services** — long-running coroutines (`harness.add_service`) that run
+  until asked to stop, with restart-on-failure and exponential backoff
+- **Async jobs** — interval jobs may be plain functions (run in a worker thread) or
+  coroutine functions (run on the loop)
+
 ```python
 from automation_harness import Harness, HarnessConfig
 
 harness = Harness(HarnessConfig(data_dir="data"), name="my-automation")
 harness.add_job("my_job", my_function, every_s=300, run_immediately=True)
-harness.run()  # blocks until Ctrl+C or SIGTERM
+harness.add_service("my_service", my_async_loop, backoff_max_s=60)
+harness.run()  # blocks until Ctrl+C or SIGTERM; owns the event loop when needed
 ```
 
-See [`examples/heartbeat`](examples/heartbeat/) for a runnable demonstration, and
-[`docs/architecture.md`](docs/architecture.md) for the technical plan. The harness is
+See [`examples/heartbeat`](examples/heartbeat/) for the thread-based runtime and
+[`examples/async_ticker`](examples/async_ticker/) for the async runtime. The harness is
 deliberately agnostic: it has no knowledge of Discord, model providers, or any other
 external service. Anything further is built only when a real application proves the need.
 

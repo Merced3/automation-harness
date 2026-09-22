@@ -131,13 +131,37 @@ A separate deployment supervisor may eventually coordinate safe updates and roll
 
 Acceptance: scheduled work remains correct after process termination and restart. **Met.**
 
-### Phase 2 and beyond — decided by real applications
+### Phase 2 — Asyncio hosting and services (complete)
+
+The first real applications (starting with discord-hub) are asyncio programs,
+and they shared two needs that are generic runtime concerns, not application
+behavior:
+
+- **Async runtime.** The harness can own an asyncio event loop. When any
+  service or coroutine job is registered, `run()` delegates to `arun()`,
+  which supervises coroutines as loop tasks and runs synchronous job
+  functions in a worker thread. Every Phase 1 guarantee (single-instance
+  lock, restart recovery, persistent schedules, structured logs, status file)
+  is unchanged. Signal handling uses the thread-safe stop event rather than
+  loop-specific signal APIs, so behavior is identical on Windows and POSIX.
+- **Supervised services.** A service is a long-running coroutine, registered
+  with `add_service`, expected to run until its stop event is set. Failures
+  are recorded as runs and the service is restarted with exponential backoff
+  (configurable initial and maximum delay); a clean return ends the service
+  without a restart. Service state, restart counts, and last errors appear in
+  the status snapshot.
+
+Acceptance: an asyncio application embedding the harness keeps its event loop
+and all Phase 1 guarantees, and a crashing service is restarted automatically
+without operator intervention. **Met.**
+
+### Phase 3 and beyond — decided by real applications
 
 There is no predetermined roadmap past this point. The next thing built into
-the harness will be whatever the first real applications (Socratic Partner,
-teaching agent, and others) turn out to genuinely need and share. Features are
-promoted into the harness only after being proven in at least one application,
-never in advance.
+the harness will be whatever real applications (Socratic Partner, teaching
+agent, discord-hub, and others) turn out to genuinely need and share. Features
+are promoted into the harness only after being proven in at least one
+application, never in advance.
 
 ## 11. Deferred decisions
 
