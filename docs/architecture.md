@@ -155,29 +155,37 @@ Acceptance: an asyncio application embedding the harness keeps its event loop
 and all Phase 1 guarantees, and a crashing service is restarted automatically
 without operator intervention. **Met.**
 
-### Phase 3 — service supervision maturity (planned, not implemented)
+### Phase 3 — service supervision maturity (complete)
 
-Phase 2 services restart on failure forever. Real operation of the first
-async applications is expected to prove two follow-on needs, documented here
-in advance but deliberately **not yet built**:
+Phase 2 services restarted on failure forever; a service crashing every few
+seconds was indistinguishable from a healthy one in the status file. Phase 3
+adds the two supervision capabilities real applications asked for:
 
-1. **Restart escalation.** After a configurable number of consecutive
-   failures, stop restarting a service and mark it permanently failed in the
-   status snapshot. A service that crashes every few seconds indefinitely is
-   indistinguishable from a healthy one in today's status file; escalation
-   makes persistent failure visible and stops wasting restarts on a service
-   that will not recover on its own. (Consecutive, not cumulative: a success
-   resets the count, so a flapping-but-recovering service is not penalized.)
-2. **Generic alert hook.** A callback the harness invokes on escalation
-   events (service permanently failed, and later possibly other notable
-   runtime events). The harness stays agnostic of delivery: the consuming
-   application decides where alerts go — a chat message, an email, a log
-   line. This is the same capability-not-integration boundary as everywhere
-   else in the harness.
+1. **Restart escalation.** `add_service` accepts `max_consecutive_failures`;
+   after that many consecutive failures the service is marked `failed` in the
+   status snapshot and restarts stop. A run that survives at least
+   `reset_after_s` seconds (an explicit knob defaulting to `backoff_max_s`)
+   counts as healthy and resets the consecutive count — so a flapping
+   service that never stays up still escalates, while a mostly-healthy
+   service with occasional crashes is not penalized. Re-arming a `failed`
+   service is deliberately operator-driven: restart the process.
+2. **Generic alert hook.** `harness.on_alert(fn)` registers a callback the
+   harness invokes with a plain event dict when a service escalates. The
+   harness stays agnostic of delivery: the consuming application decides
+   where alerts go — a chat message, an email, a log line. Hooks may be sync
+   or async; hook failures are logged and never affect supervision. This is
+   the same capability-not-integration boundary as everywhere else in the
+   harness.
 
-Both items wait for a real application to demonstrate the need before being
-implemented; the design sketch above exists so the need can be recognized
-when it appears.
+Acceptance: a repeatedly crashing service becomes visibly `failed` in
+`status.json`, restarts stop, and the application is notified exactly once
+through its own delivery channel. **Met.**
+
+Deferred: a `restart_service(name)` API for in-process re-arming is a real
+feature with real edge cases (should it reset counters? interact with the
+stop event? race with escalation?) and stays out of scope until an
+application needs it. Manual re-arm today is a process restart, which is
+honest and sufficient.
 
 ### Phase 4 and beyond — decided by real applications
 

@@ -4,7 +4,7 @@ from .config import HarnessConfig
 from .runtime import AlreadyRunningError, Harness, JobContext, ServiceContext
 from .store import Store
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "AlreadyRunningError",

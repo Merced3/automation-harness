@@ -46,8 +46,13 @@ async def pulse(ctx: JobContext) -> None:
 
 def main() -> None:
     harness = Harness(HarnessConfig(data_dir=Path(__file__).parent / "data"), name="ticker")
-    harness.add_service("ticker", ticker, backoff_initial_s=1, backoff_max_s=30)
+    harness.add_service("ticker", ticker, backoff_initial_s=1, backoff_max_s=30,
+                        max_consecutive_failures=5)
     harness.add_job("pulse", pulse, every_s=7, run_immediately=True)
+    # Alert delivery is application code: this example prints, a real app
+    # would page its operator however it likes.
+    harness.on_alert(lambda event: print(f"ALERT: {event['service']} escalated "
+                                         f"after {event['consecutive_failures']} failures"))
     harness.run()  # services/async jobs present: harness owns the event loop
 
 
