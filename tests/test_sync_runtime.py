@@ -1,5 +1,6 @@
-"""Focused tests for the runtime guarantees the harness exists to provide:
-persistent scheduling, restart recovery, and single-instance coordination."""
+"""Focused tests for the synchronous (thread-based) runtime guarantees the
+harness exists to provide: persistent scheduling, restart recovery, and
+single-instance coordination."""
 
 import threading
 import time
