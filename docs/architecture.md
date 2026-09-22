@@ -155,7 +155,31 @@ Acceptance: an asyncio application embedding the harness keeps its event loop
 and all Phase 1 guarantees, and a crashing service is restarted automatically
 without operator intervention. **Met.**
 
-### Phase 3 and beyond — decided by real applications
+### Phase 3 — service supervision maturity (planned, not implemented)
+
+Phase 2 services restart on failure forever. Real operation of the first
+async applications is expected to prove two follow-on needs, documented here
+in advance but deliberately **not yet built**:
+
+1. **Restart escalation.** After a configurable number of consecutive
+   failures, stop restarting a service and mark it permanently failed in the
+   status snapshot. A service that crashes every few seconds indefinitely is
+   indistinguishable from a healthy one in today's status file; escalation
+   makes persistent failure visible and stops wasting restarts on a service
+   that will not recover on its own. (Consecutive, not cumulative: a success
+   resets the count, so a flapping-but-recovering service is not penalized.)
+2. **Generic alert hook.** A callback the harness invokes on escalation
+   events (service permanently failed, and later possibly other notable
+   runtime events). The harness stays agnostic of delivery: the consuming
+   application decides where alerts go — a chat message, an email, a log
+   line. This is the same capability-not-integration boundary as everywhere
+   else in the harness.
+
+Both items wait for a real application to demonstrate the need before being
+implemented; the design sketch above exists so the need can be recognized
+when it appears.
+
+### Phase 4 and beyond — decided by real applications
 
 There is no predetermined roadmap past this point. The next thing built into
 the harness will be whatever real applications (Socratic Partner, teaching

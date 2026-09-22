@@ -62,6 +62,9 @@ harness.add_service("my_service", my_async_loop, backoff_max_s=60)
 harness.run()  # blocks until Ctrl+C or SIGTERM; owns the event loop when needed
 ```
 
+Planned next (Phase 3, documented but not yet built): restart escalation for
+permanently failing services and a generic, delivery-agnostic alert hook.
+
 See [`examples/heartbeat`](examples/heartbeat/) for the thread-based runtime and
 [`examples/async_ticker`](examples/async_ticker/) for the async runtime. The harness is
 deliberately agnostic: it has no knowledge of Discord, model providers, or any other
