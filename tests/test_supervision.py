@@ -5,9 +5,9 @@ import threading
 import time
 
 import pytest
+from conftest import run_harness_thread, wait_for
 
 from automation_harness import Harness, HarnessConfig
-from tests.test_async_runtime import run_harness_thread, wait_for
 
 
 @pytest.fixture()

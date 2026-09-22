@@ -5,6 +5,7 @@ import threading
 import time
 
 import pytest
+from conftest import run_harness_thread, wait_for
 
 from automation_harness import Harness, HarnessConfig
 
@@ -12,21 +13,6 @@ from automation_harness import Harness, HarnessConfig
 @pytest.fixture()
 def config(tmp_path):
     return HarnessConfig(data_dir=tmp_path / "data", node_id="test-node")
-
-
-def run_harness_thread(h: Harness) -> threading.Thread:
-    t = threading.Thread(target=h.run, daemon=True)
-    t.start()
-    return t
-
-
-def wait_for(predicate, timeout=5.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.02)
-    return False
 
 
 def test_service_runs_until_stopped(config):
