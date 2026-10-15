@@ -9,6 +9,6 @@ on:
 
 jobs:
   checks:
-    uses: Merced3/automations/.github/workflows/python-checks.yml@main
+    uses: Merced3/automations-ci/.github/workflows/python-checks.yml@main
     with:
       needs-harness: false
