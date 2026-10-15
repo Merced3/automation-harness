@@ -1,3 +1,6 @@
+# CI — calls the shared checklist defined once in Merced3/automations
+# (.github/workflows/python-checks.yml). Change it there, not here.
+# This repo IS automation-harness, so the harness-checkout step is skipped.
 name: CI
 
 on:
@@ -5,17 +8,7 @@ on:
   pull_request:
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install
-        run: python -m pip install -e ".[dev]"
-      - name: Lint
-        run: ruff check .
-      - name: Test
-        run: pytest
+  checks:
+    uses: Merced3/automations/.github/workflows/python-checks.yml@main
+    with:
+      needs-harness: false
