@@ -44,5 +44,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
+          # Label may not exist yet on a fresh repo — create, then apply.
+          gh label create needs-review --description "Dependency bump skipped by auto-merge; needs a human" --color d93f0b 2>/dev/null || true
           gh pr edit "$PR_URL" --add-label "needs-review" || true
           gh pr comment "$PR_URL" --body "Major version bump — skipping auto-merge. A human should review this one." || true
