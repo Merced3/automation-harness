@@ -430,9 +430,17 @@ class PiRpcClient:
 
 
 def _subprocess_creationflags() -> int:
-    """Hide the Pi console window on Windows."""
+    """Hide the Pi console window on Windows.
+
+    Without CREATE_NO_WINDOW, Windows allocates a visible console for the Pi
+    subprocess. Closing that console kills Pi, and the next prompt then spawns
+    a new window — the observed pop-up/pop-away behavior. Pipes are unaffected.
+    """
     if sys.platform == "win32":
-        return subprocess.CREATE_NO_WINDOW
+        # getattr: subprocess only defines the constant on Windows, but tests
+        # simulate win32 on any platform. The value (0x08000000) is fixed by
+        # Windows itself, so the fallback is exact.
+        return getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     return 0
 
 
