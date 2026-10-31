@@ -1,0 +1,7 @@
+# Human review for shared runtime contracts and all-services rollout risk.
+/CORE-CONSTRAINTS.md @Merced3
+/README.md @Merced3
+/.github/ @Merced3
+/docs/architecture.md @Merced3
+/src/ @Merced3
+/pyproject.toml @Merced3
