@@ -5,7 +5,7 @@ from .pi_rpc import PiRpcClient, PiRpcError, PiRunResult
 from .runtime import AlreadyRunningError, Harness, JobContext, ServiceContext
 from .store import Store
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "AlreadyRunningError",

@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+_LEGACY_RUN_NAMESPACE = uuid.UUID("db53f6db-b52f-4a13-a996-fcdb4680e3c3")
 
 _MIGRATIONS: dict[int, str] = {
     1: """
@@ -27,7 +29,7 @@ _MIGRATIONS: dict[int, str] = {
     CREATE TABLE runs (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         job_name    TEXT NOT NULL,
-        status      TEXT NOT NULL,            -- running | succeeded | failed | interrupted
+        status      TEXT NOT NULL,
         started_at  TEXT NOT NULL,
         finished_at TEXT,
         error       TEXT,
@@ -56,7 +58,7 @@ def _parse(text: str) -> datetime:
 
 
 class Store:
-    """Durable operational state. One instance per process; thread-safe."""
+    """SQLite durable operational state. One instance per process; thread-safe."""
 
     def __init__(self, path: str | Path):
         self._path = Path(path)
@@ -91,27 +93,69 @@ class Store:
                     "SELECT value FROM meta WHERE key='schema_version'"
                 ).fetchone()
                 version = int(r["value"]) if r else 0
+            if version > SCHEMA_VERSION:
+                raise RuntimeError(
+                    f"SQLite schema version {version} is newer than supported {SCHEMA_VERSION}"
+                )
             for v in range(version + 1, SCHEMA_VERSION + 1):
-                self._conn.executescript(_MIGRATIONS[v])
+                if v == 1:
+                    self._conn.executescript(_MIGRATIONS[v])
+                elif v == 2:
+                    self._migrate_uuid_runs()
                 self._conn.execute(
                     "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                     (str(v),),
                 )
             self._conn.commit()
 
+    def _migrate_uuid_runs(self) -> None:
+        """Give run records portable UUIDs while retaining their ordering."""
+        self._conn.executescript(
+            """
+            CREATE TABLE runs_new (
+                seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          TEXT NOT NULL UNIQUE,
+                job_name    TEXT NOT NULL,
+                status      TEXT NOT NULL,
+                started_at  TEXT NOT NULL,
+                finished_at TEXT,
+                error       TEXT,
+                pid         INTEGER NOT NULL,
+                node        TEXT NOT NULL
+            );
+            """
+        )
+        rows = self._conn.execute("SELECT * FROM runs ORDER BY id").fetchall()
+        for row in rows:
+            legacy_id = str(uuid.uuid5(_LEGACY_RUN_NAMESPACE, f"sqlite-run:{row['id']}"))
+            self._conn.execute(
+                """INSERT INTO runs_new
+                   (seq, id, job_name, status, started_at, finished_at, error, pid, node)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    row["id"], legacy_id, row["job_name"], row["status"], row["started_at"],
+                    row["finished_at"], row["error"], row["pid"], row["node"],
+                ),
+            )
+        self._conn.executescript(
+            """
+            DROP TABLE runs;
+            ALTER TABLE runs_new RENAME TO runs;
+            CREATE INDEX idx_runs_job ON runs (job_name, seq);
+            """
+        )
+
     # -- schedules -------------------------------------------------------
 
     def upsert_schedule(
         self, job_name: str, interval_s: float, next_run_at: datetime, *, reset: bool = False
     ) -> None:
-        """Create or update a schedule. Existing schedules keep their persisted
-        next_run_at across restarts unless reset=True (schedule changed)."""
         with self._lock:
             row = self._conn.execute(
                 "SELECT interval_s, next_run_at FROM schedules WHERE job_name=?", (job_name,)
             ).fetchone()
             if row is not None and not reset and abs(row["interval_s"] - interval_s) < 1e-9:
-                return  # keep persisted timing across restarts
+                return
             self._conn.execute(
                 """INSERT INTO schedules (job_name, interval_s, next_run_at)
                    VALUES (?, ?, ?)
@@ -124,7 +168,6 @@ class Store:
             self._conn.commit()
 
     def due_jobs(self, now: datetime) -> list[str]:
-        """Jobs whose next_run_at is at or before now (includes missed runs)."""
         with self._lock:
             rows = self._conn.execute(
                 "SELECT job_name FROM schedules WHERE enabled=1 AND next_run_at<=?"
@@ -134,11 +177,6 @@ class Store:
             return [r["job_name"] for r in rows]
 
     def advance_schedule(self, job_name: str, interval_s: float, after: datetime) -> None:
-        """Move next_run_at strictly into the future relative to `after`.
-
-        Skips missed occurrences so a long downtime causes one catch-up run,
-        not a storm.
-        """
         next_at = after + timedelta(seconds=interval_s)
         with self._lock:
             self._conn.execute(
@@ -157,17 +195,18 @@ class Store:
 
     # -- runs ------------------------------------------------------------
 
-    def start_run(self, job_name: str, pid: int, node: str) -> int:
+    def start_run(self, job_name: str, pid: int, node: str) -> str:
+        run_id = str(uuid.uuid4())
         with self._lock:
-            cur = self._conn.execute(
-                "INSERT INTO runs (job_name, status, started_at, pid, node)"
-                " VALUES (?, 'running', ?, ?, ?)",
-                (job_name, _iso(utcnow()), pid, node),
+            self._conn.execute(
+                "INSERT INTO runs (id, job_name, status, started_at, pid, node)"
+                " VALUES (?, ?, 'running', ?, ?, ?)",
+                (run_id, job_name, _iso(utcnow()), pid, node),
             )
             self._conn.commit()
-            return int(cur.lastrowid)
+        return run_id
 
-    def finish_run(self, run_id: int, status: str, error: str | None = None) -> None:
+    def finish_run(self, run_id: str, status: str, error: str | None = None) -> None:
         with self._lock:
             self._conn.execute(
                 "UPDATE runs SET status=?, finished_at=?, error=? WHERE id=?",
@@ -176,7 +215,6 @@ class Store:
             self._conn.commit()
 
     def mark_interrupted(self) -> int:
-        """On startup, mark runs from dead processes as interrupted. Returns count."""
         with self._lock:
             cur = self._conn.execute(
                 "UPDATE runs SET status='interrupted', finished_at=?,"
@@ -190,7 +228,7 @@ class Store:
     def last_runs(self, limit: int = 20) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM runs ORDER BY id DESC LIMIT ?", (limit,)
+                "SELECT * FROM runs ORDER BY seq DESC LIMIT ?", (limit,)
             ).fetchall()
             return [dict(r) for r in rows]
 
@@ -198,8 +236,8 @@ class Store:
         with self._lock:
             rows = self._conn.execute(
                 """SELECT r.* FROM runs r
-                   JOIN (SELECT job_name, MAX(id) AS max_id FROM runs GROUP BY job_name) m
-                     ON r.id = m.max_id"""
+                   JOIN (SELECT job_name, MAX(seq) AS max_seq FROM runs GROUP BY job_name) m
+                     ON r.seq = m.max_seq"""
             ).fetchall()
             return {r["job_name"]: dict(r) for r in rows}
 

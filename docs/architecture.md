@@ -22,13 +22,17 @@ Applications define their own workflows, prompts, algorithms, source selection, 
 
 ### Replaceable surroundings
 
-The harness persists to local files and SQLite and talks to nothing else. Any
-external system an application needs is added by that application, so replacing
-one never requires changing the harness.
+The harness persists operational state to local SQLite by default or to an
+operator-selected Postgres database. Application-specific external systems remain
+the application's responsibility, so replacing one never requires changing the
+harness. Postgres is a generic durable-store capability, not an application
+integration. See ADR 0004.
 
 ### Local-first portability
 
-A deployment should run on one machine with minimal external infrastructure. Its operational state should remain portable and under the operator's control, while leaving room for future distributed deployments.
+Local development runs with minimal external infrastructure. Deployed
+applications can keep authoritative operational state off-box so compute is
+disposable, while retaining a disposable local health projection.
 
 ### Observable operation
 
@@ -100,7 +104,9 @@ capability (like a retry helper), never as knowledge of a specific service.
 
 Initial records should use stable identifiers, UTC timestamps, node identity, provenance, idempotent operations where practical, and explicit migrations.
 
-These choices preserve future options such as centralized storage, synchronization between nodes, and durable outbox delivery without requiring distributed infrastructure in the first version.
+Centralized operational storage is now supported through the pluggable Postgres
+backend. These choices also preserve future options such as durable outbox
+delivery without requiring distributed infrastructure for local development.
 
 ## 9. Updates and deployment
 
@@ -200,7 +206,6 @@ application, never in advance.
 These are explicitly out of scope until a real application forces the question:
 
 - Distributed scheduling and leader election
-- Central database synchronization
 - Semantic or vector retrieval
 - Multi-model routing and adjudication
 - Dynamic plugin discovery

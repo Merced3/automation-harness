@@ -31,9 +31,13 @@ class HarnessConfig:
 
     data_dir: Path
     node_id: str = field(default="")
+    database_url: str | None = None
+    lock_lease_seconds: float = 30.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "data_dir", Path(self.data_dir))
+        if self.lock_lease_seconds <= 0:
+            raise ValueError("lock_lease_seconds must be positive")
         if not self.node_id:
             host = platform.node() or "node"
             object.__setattr__(self, "node_id", f"{host}-{uuid.uuid4().hex[:8]}")
@@ -56,4 +60,9 @@ class HarnessConfig:
             _load_dotenv(Path(env_file))
         data_dir = os.environ.get("AUTOMATION_HARNESS_DATA_DIR", "data")
         node_id = os.environ.get("AUTOMATION_HARNESS_NODE_ID", "")
-        return cls(data_dir=Path(data_dir), node_id=node_id)
+        database_url = os.environ.get("HARNESS_DATABASE_URL") or None
+        lease_seconds = float(os.environ.get("HARNESS_LOCK_LEASE_SECONDS", "30"))
+        return cls(
+            data_dir=Path(data_dir), node_id=node_id,
+            database_url=database_url, lock_lease_seconds=lease_seconds,
+        )
