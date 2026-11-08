@@ -30,7 +30,7 @@ class JobContext:
 
     harness: Harness
     job_name: str
-    run_id: int
+    run_id: str
 
     def get_state(self, key: str, default: Any = None) -> Any:
         return self.harness.store.get_state(f"job.{self.job_name}.{key}", default)
@@ -68,7 +68,7 @@ class ServiceContext:
 
     harness: Harness
     service_name: str
-    run_id: int
+    run_id: str
     stop_event: asyncio.Event
     restart_count: int = 0
 
@@ -118,12 +118,23 @@ class Harness:
             level=os.environ.get("AUTOMATION_HARNESS_LOG_LEVEL", "INFO"),
             json_output=os.environ.get("AUTOMATION_HARNESS_LOG_JSON", "1") != "0",
         )
-        self.store = Store(self.config.database_path)
+        if self.config.database_url:
+            try:
+                from .postgres import PostgresStore
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Postgres support requires automation-harness[postgres]"
+                ) from exc
+            self.store = PostgresStore(self.config.database_url)
+        else:
+            self.store = Store(self.config.database_path)
         self._jobs: dict[str, _Job] = {}
         self._services: dict[str, _Service] = {}
         self._stop = threading.Event()
         self._started_at: datetime | None = None
         self._lock_acquired = False
+        self._lease_stop = threading.Event()
+        self._lease_thread: threading.Thread | None = None
         self._health_checks: dict[str, Callable[[], bool]] = {}
         self._alert_hooks: list[Callable[[dict[str, Any]], Any]] = []
 
@@ -206,8 +217,21 @@ class Harness:
     # -- lifecycle --------------------------------------------------------
 
     def _acquire_lock(self) -> None:
-        """Single-instance coordination: refuse to start if a live process
-        holds the deployment lock. Stale locks from dead processes are reclaimed."""
+        """Coordinate one instance locally (SQLite) or across machines (Postgres)."""
+        if self.config.database_url:
+            if not self.store.acquire_instance_lock(
+                self.name, lease_seconds=self.config.lock_lease_seconds
+            ):
+                raise AlreadyRunningError(
+                    f"another harness process holds the Postgres lock for {self.name!r}"
+                )
+            self._lock_acquired = True
+            self._lease_stop.clear()
+            self._lease_thread = threading.Thread(
+                target=self._heartbeat_lease, name="harness-lease", daemon=True
+            )
+            self._lease_thread.start()
+            return
         path = self.config.lock_path
         if path.exists():
             try:
@@ -222,9 +246,30 @@ class Harness:
         path.write_text(str(os.getpid()))
         self._lock_acquired = True
 
+    def _heartbeat_lease(self) -> None:
+        """Renew the pooled lease; loss prevents further job/service scheduling."""
+        interval = self.config.lock_lease_seconds / 3
+        while not self._lease_stop.wait(interval):
+            try:
+                renewed = self.store.renew_instance_lock()
+            except Exception:  # noqa: BLE001 - database loss must stop scheduling
+                logger.exception("failed to renew harness instance lease")
+                renewed = False
+            if not renewed:
+                logger.error("harness instance lease lost; requesting shutdown")
+                self.stop()
+                return
+
     def _release_lock(self) -> None:
+        self._lease_stop.set()
+        if self._lease_thread is not None and self._lease_thread is not threading.current_thread():
+            self._lease_thread.join(timeout=self.config.lock_lease_seconds)
+        self._lease_thread = None
         if self._lock_acquired:
-            self.config.lock_path.unlink(missing_ok=True)
+            if self.config.database_url:
+                self.store.release_instance_lock()
+            else:
+                self.config.lock_path.unlink(missing_ok=True)
             self._lock_acquired = False
 
     def _install_signal_handlers(self) -> None:
@@ -407,7 +452,7 @@ class Harness:
             if not escalated:
                 service.state = "stopped"
 
-    async def _emit_alert(self, service: _Service, run_id: int) -> None:
+    async def _emit_alert(self, service: _Service, run_id: str) -> None:
         """Invoke alert hooks with a plain event dict. Hooks are application
         code; their errors are logged and never affect supervision."""
         event: dict[str, Any] = {
