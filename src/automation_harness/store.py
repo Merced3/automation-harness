@@ -100,50 +100,55 @@ class Store:
             for v in range(version + 1, SCHEMA_VERSION + 1):
                 if v == 1:
                     self._conn.executescript(_MIGRATIONS[v])
+                    self._conn.commit()
                 elif v == 2:
                     self._migrate_uuid_runs()
                 self._conn.execute(
                     "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                     (str(v),),
                 )
-            self._conn.commit()
+                self._conn.commit()
 
     def _migrate_uuid_runs(self) -> None:
-        """Give run records portable UUIDs while retaining their ordering."""
-        self._conn.executescript(
-            """
-            CREATE TABLE runs_new (
-                seq         INTEGER PRIMARY KEY AUTOINCREMENT,
-                id          TEXT NOT NULL UNIQUE,
-                job_name    TEXT NOT NULL,
-                status      TEXT NOT NULL,
-                started_at  TEXT NOT NULL,
-                finished_at TEXT,
-                error       TEXT,
-                pid         INTEGER NOT NULL,
-                node        TEXT NOT NULL
-            );
-            """
-        )
-        rows = self._conn.execute("SELECT * FROM runs ORDER BY id").fetchall()
-        for row in rows:
-            legacy_id = str(uuid.uuid5(_LEGACY_RUN_NAMESPACE, f"sqlite-run:{row['id']}"))
+        """Give run records portable UUIDs while retaining their ordering.
+
+        Avoid executescript here: its implicit commits would make an interrupted
+        table replacement unrecoverable on the next startup. The caller writes
+        schema_version before committing this same transaction.
+        """
+        try:
+            self._conn.execute("BEGIN")
             self._conn.execute(
-                """INSERT INTO runs_new
-                   (seq, id, job_name, status, started_at, finished_at, error, pid, node)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    row["id"], legacy_id, row["job_name"], row["status"], row["started_at"],
-                    row["finished_at"], row["error"], row["pid"], row["node"],
-                ),
+                """CREATE TABLE runs_new (
+                    seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id          TEXT NOT NULL UNIQUE,
+                    job_name    TEXT NOT NULL,
+                    status      TEXT NOT NULL,
+                    started_at  TEXT NOT NULL,
+                    finished_at TEXT,
+                    error       TEXT,
+                    pid         INTEGER NOT NULL,
+                    node        TEXT NOT NULL
+                )"""
             )
-        self._conn.executescript(
-            """
-            DROP TABLE runs;
-            ALTER TABLE runs_new RENAME TO runs;
-            CREATE INDEX idx_runs_job ON runs (job_name, seq);
-            """
-        )
+            rows = self._conn.execute("SELECT * FROM runs ORDER BY id").fetchall()
+            for row in rows:
+                legacy_id = str(uuid.uuid5(_LEGACY_RUN_NAMESPACE, f"sqlite-run:{row['id']}"))
+                self._conn.execute(
+                    """INSERT INTO runs_new
+                       (seq, id, job_name, status, started_at, finished_at, error, pid, node)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        row["id"], legacy_id, row["job_name"], row["status"], row["started_at"],
+                        row["finished_at"], row["error"], row["pid"], row["node"],
+                    ),
+                )
+            self._conn.execute("DROP TABLE runs")
+            self._conn.execute("ALTER TABLE runs_new RENAME TO runs")
+            self._conn.execute("CREATE INDEX idx_runs_job ON runs (job_name, seq)")
+        except Exception:
+            self._conn.rollback()
+            raise
 
     # -- schedules -------------------------------------------------------
 

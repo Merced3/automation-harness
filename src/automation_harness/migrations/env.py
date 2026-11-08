@@ -25,6 +25,10 @@ def run_migrations_online() -> None:
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
+            # A transaction-scoped advisory lock remains on one backend even
+            # through PgBouncer transaction pooling. Serialize fresh-schema DDL
+            # and version-table creation across racing application replicas.
+            connection.exec_driver_sql("SELECT pg_advisory_xact_lock(7263841559806511449)")
             context.run_migrations()
 
 

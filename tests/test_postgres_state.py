@@ -158,6 +158,32 @@ def test_alembic_upgrade_is_idempotent_and_downgrade_upgrades(postgres_schema):
         assert store.start_run("after", pid=1, node="node") != run_id
 
 
+def test_concurrent_initial_schema_upgrades_are_serialized(postgres_schema):
+    from automation_harness.postgres import PostgresStore
+
+    url, _ = postgres_schema
+    commands = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "from automation_harness.migrations import main; main()",
+                url,
+                "upgrade",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for _ in range(4)
+    ]
+    for command in commands:
+        stdout, stderr = command.communicate(timeout=60)
+        assert command.returncode == 0, stdout + stderr
+    with PostgresStore(url) as store:
+        assert store.start_run("after-race", pid=1, node="node")
+
+
 def test_sqlite_copy_merges_both_sources_idempotently(postgres_schema, tmp_path):
     from automation_harness.migrate import migrate_sqlite
     from automation_harness.postgres import PostgresStore

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from datetime import timedelta
@@ -72,6 +73,39 @@ def test_sqlite_v1_database_upgrades_without_losing_history(tmp_path):
         assert len(rows[0]["id"]) == 36
         new_id = store.start_run("new", pid=2, node="new")
         assert store.last_run_per_job()["new"]["id"] == new_id
+
+
+def test_sqlite_uuid_migration_rolls_back_partial_replacement(tmp_path):
+    path = tmp_path / "harness.db"
+    with Store(path) as store:
+        store.start_run("legacy", pid=1, node="old")
+        store._conn.executescript(
+            """
+            DROP TABLE runs;
+            CREATE TABLE runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_name TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL,
+                finished_at TEXT, error TEXT, pid INTEGER NOT NULL, node TEXT NOT NULL
+            );
+            INSERT INTO runs VALUES
+                (7, 'legacy', 'succeeded', '2026-01-01T00:00:00+00:00',
+                 '2026-01-01T00:00:01+00:00', NULL, 1, 'old');
+            UPDATE meta SET value='1' WHERE key='schema_version';
+            """
+        )
+
+        def deny_drop(action, *args):
+            return 1 if action == sqlite3.SQLITE_DROP_TABLE else 0
+
+        store._conn.set_authorizer(deny_drop)
+        with pytest.raises(sqlite3.DatabaseError):
+            store._migrate_uuid_runs()
+        store._conn.set_authorizer(None)
+        assert store._conn.execute(
+            "SELECT name FROM sqlite_master WHERE name='runs_new'"
+        ).fetchone() is None
+        store._migrate()
+        assert store.last_runs()[0]["job_name"] == "legacy"
 
 
 def test_database_url_defaults_to_sqlite_and_reads_generic_env(tmp_path, monkeypatch):
