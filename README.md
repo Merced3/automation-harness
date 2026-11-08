@@ -133,6 +133,12 @@ pytest
 ruff check .
 ```
 
+The harness's own tests remain offline and Discord-agnostic. If a harness
+change needs live acceptance through a consuming application, follow
+**`Automations/ops/LAB.md`** with that application's isolated configuration and
+production-restoration checklist. The shared lab is an ops/consumer concern; no
+Discord registration or lab lifecycle belongs in the harness.
+
 ## Configuration and private data
 
 - `.env.example` documents deployment settings and contains no real values.
